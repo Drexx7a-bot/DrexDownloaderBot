@@ -21,7 +21,6 @@ const AUTO_CLIP_INTERVAL = 10 * 60 * 1000;
 const MIN_CLIP_SECONDS = 15;
 const MAX_CLIP_SECONDS = 30;
 
-// نلتقط 35 ثانية من البث ثم نختار منها 15-30 ثانية
 const LIVE_CAPTURE_SECONDS = 35;
 
 const TELEGRAM_LIMIT = 49 * 1024 * 1024;
@@ -36,8 +35,17 @@ if (!ffmpegPath) {
   process.exit(1);
 }
 
+// ==================================================
+// TELEGRAM BOT
+// ==================================================
+
 const bot = new TelegramBot(TOKEN, {
-  polling: true
+  polling: {
+    autoStart: true,
+    params: {
+      timeout: 30
+    }
+  }
 });
 
 // ==================================================
@@ -741,7 +749,7 @@ function runFFmpeg(
   return new Promise(
     (resolve, reject) => {
       console.log(
-        `🎞️ FFmpeg starting`
+        "🎞️ FFmpeg starting"
       );
 
       const child =
@@ -846,15 +854,6 @@ async function captureLive(
   console.log(
     `📡 تم العثور على رابط البث @${username}`
   );
-
-  /*
-   * نستخدم FFmpeg مباشرة.
-   *
-   * لا نستخدم:
-   * downloader: "ffmpeg"
-   *
-   * لتجنب crash السابق.
-   */
 
   await runFFmpeg([
     "-hide_banner",
@@ -1137,10 +1136,6 @@ async function createVodClip(
     );
   }
 
-  /*
-   * إذا كان Live لا ندخل مسار VOD.
-   */
-
   if (
     isLiveInfo(info)
   ) {
@@ -1206,11 +1201,6 @@ async function createVodClip(
     console.log(
       `📼 VOD @${username} | ${start}s | ${clipDuration}s`
     );
-
-    /*
-     * نستخدم yt-dlp فقط لتنزيل الجزء المطلوب.
-     * لا نحاول تجاوز VOD خاص بالمشتركين.
-     */
 
     await youtubedl(
       vodUrl,
@@ -1401,8 +1391,6 @@ async function createAndSendClip(
 
 // ==================================================
 // /clip
-// LIVE -> LIVE
-// OFFLINE -> VOD
 // ==================================================
 
 bot.onText(
@@ -1456,10 +1444,6 @@ bot.onText(
         );
       }
 
-      // ==============================================
-      // LIVE
-      // ==============================================
-
       if (
         isLiveInfo(info)
       ) {
@@ -1490,10 +1474,6 @@ bot.onText(
 
         return;
       }
-
-      // ==============================================
-      // OFFLINE
-      // ==============================================
 
       await bot.sendMessage(
         msg.chat.id,
@@ -1565,12 +1545,6 @@ async function monitor() {
     return;
   }
 
-  /*
-   * نبحث عن Live عشوائي.
-   * إذا وجدنا واحدًا، ننشئ كليبًا واحدًا
-   * لكل قناة في هذه الدورة.
-   */
-
   const shuffled =
     [...streamers];
 
@@ -1608,18 +1582,32 @@ async function monitor() {
         const channel
         of channelList
       ) {
-        addToQueue({
-          streamer:
-            username,
+        const duplicate =
+          queue.some(
+            job =>
+              job.streamer
+                .toLowerCase() ===
+                username.toLowerCase() &&
+              job.chatId ===
+                channel.id &&
+              job.type ===
+                "live"
+          );
 
-          type:
-            "live",
+        if (!duplicate) {
+          addToQueue({
+            streamer:
+              username,
 
-          info,
+            type:
+              "live",
 
-          chatId:
-            channel.id
-        });
+            info,
+
+            chatId:
+              channel.id
+          });
+        }
       }
 
       break;
@@ -1650,7 +1638,7 @@ console.log(
 );
 
 console.log(
-  `🎬 Auto clips: every 10 minutes`
+  "🎬 Auto clips: every 10 minutes"
 );
 
 console.log(
@@ -1661,31 +1649,50 @@ console.log(
   `🎞️ FFmpeg: ${ffmpegPath}`
 );
 
-// أول فحص بعد 15 ثانية
 setTimeout(
   monitor,
   15000
 );
 
-// ثم كل 10 دقائق
 setInterval(
   monitor,
   AUTO_CLIP_INTERVAL
 );
 
 // ==================================================
-// ERRORS
+// TELEGRAM POLLING ERRORS
 // ==================================================
 
 bot.on(
   "polling_error",
   error => {
+    const message =
+      String(
+        error?.message ||
+        ""
+      );
+
     console.error(
-      "❌ Telegram polling:",
-      error.message
+      `⚠️ Telegram polling error: ${message}`
     );
+
+    if (
+      message.includes("502") ||
+      message.includes("Bad Gateway") ||
+      message.includes("ECONNRESET") ||
+      message.includes("ETIMEDOUT") ||
+      message.includes("ECONNREFUSED")
+    ) {
+      console.log(
+        "🔄 Telegram connection error — automatic retry will continue."
+      );
+    }
   }
 );
+
+// ==================================================
+// PROCESS ERRORS
+// ==================================================
 
 process.on(
   "uncaughtException",
