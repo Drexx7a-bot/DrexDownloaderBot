@@ -28,7 +28,7 @@ const server = http.createServer((req, res) => {
     "Content-Type": "text/plain; charset=utf-8"
   });
 
-  res.end("Drex Downloader Bot is running ✅");
+  res.end("Drex Clips Bot is running ✅");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
@@ -39,41 +39,91 @@ server.listen(PORT, "0.0.0.0", () => {
 // DATA
 // =========================
 
-const DATA_DIR = path.join(os.tmpdir(), "drex-downloader");
+const DATA_DIR = path.join(
+  os.tmpdir(),
+  "drex-clips"
+);
 
-const CHANNELS_FILE = path.join(DATA_DIR, "channels.json");
-const STREAMERS_FILE = path.join(DATA_DIR, "streamers.json");
-const DOWNLOADED_FILE = path.join(DATA_DIR, "downloaded.json");
+const CHANNELS_FILE = path.join(
+  DATA_DIR,
+  "channels.json"
+);
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const STREAMERS_FILE = path.join(
+  DATA_DIR,
+  "streamers.json"
+);
+
+const CLIPS_FILE = path.join(
+  DATA_DIR,
+  "clips.json"
+);
+
+fs.mkdirSync(DATA_DIR, {
+  recursive: true
+});
 
 function loadJSON(file, fallback) {
   try {
     if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, JSON.stringify(fallback, null, 2));
+      fs.writeFileSync(
+        file,
+        JSON.stringify(fallback, null, 2)
+      );
+
       return fallback;
     }
 
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return JSON.parse(
+      fs.readFileSync(file, "utf8")
+    );
   } catch {
     return fallback;
   }
 }
 
 function saveJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  fs.writeFileSync(
+    file,
+    JSON.stringify(data, null, 2)
+  );
 }
 
-let channels = loadJSON(CHANNELS_FILE, {});
-let streamers = loadJSON(STREAMERS_FILE, []);
-let downloaded = loadJSON(DOWNLOADED_FILE, {});
+let channels = loadJSON(
+  CHANNELS_FILE,
+  {}
+);
+
+let streamers = loadJSON(
+  STREAMERS_FILE,
+  []
+);
+
+let clips = loadJSON(
+  CLIPS_FILE,
+  {}
+);
+
+// =========================
+// SETTINGS
+// =========================
+
+const AUTO_CLIP_INTERVAL = 10 * 60 * 1000;
+
+const MIN_CLIP_SECONDS = 15;
+const MAX_CLIP_SECONDS = 30;
+
+const LIVE_CAPTURE_SECONDS = 32;
+
+const TELEGRAM_LIMIT =
+  49 * 1024 * 1024;
 
 // =========================
 // QUEUE
 // =========================
 
 let queue = [];
-let downloading = false;
+let processing = false;
 
 function addToQueue(job) {
   queue.push(job);
@@ -81,47 +131,58 @@ function addToQueue(job) {
 }
 
 async function processQueue() {
-  if (downloading || queue.length === 0) {
+  if (processing || queue.length === 0) {
     return;
   }
 
-  downloading = true;
+  processing = true;
 
   const job = queue.shift();
 
   try {
-    await downloadAndSend(job);
+    await createAndSendClip(job);
   } catch (error) {
-    console.error("❌ Job error:", error.message);
+    console.error(
+      "❌ Clip job:",
+      error?.message || error
+    );
 
-    try {
-      await bot.sendMessage(
-        job.chatId,
-        `❌ حدث خطأ أثناء تنزيل بث @${job.streamer}`
-      );
-    } catch {}
+    if (job.notifyChatId) {
+      try {
+        await bot.sendMessage(
+          job.notifyChatId,
+          `❌ فشل إنشاء كليب @${job.streamer}\n\n${error?.message || "خطأ غير معروف"}`
+        );
+      } catch {}
+    }
   }
 
-  downloading = false;
+  processing = false;
 
-  setTimeout(processQueue, 1000);
+  setTimeout(
+    processQueue,
+    1000
+  );
 }
 
 // =========================
 // START
 // =========================
 
-bot.onText(/^\/start$/, async (msg) => {
+bot.onText(/^\/start$/i, async (msg) => {
   await bot.sendMessage(
     msg.chat.id,
     [
-      "🤖 Drex Downloader Bot",
+      "🤖 Drex Clips Bot",
       "",
-      "البوت يعمل بنجاح ✅",
+      "🎬 بوت كليبات Kick",
       "",
-      "📥 وظيفته تنزيل بثوث Kick وإرسالها للقناة.",
+      "🔴 كليب تلقائي كل 10 دقائق.",
+      "⏱️ مدة الكليب: 15–30 ثانية.",
+      "🏆 أعلى جودة متاحة.",
       "",
-      "⚙️ لا يحتاج CHANNEL_ID.",
+      "🎬 طلب كليب يدوي:",
+      "/clip username",
       "",
       "➕ إضافة حساب:",
       "/add username",
@@ -129,10 +190,10 @@ bot.onText(/^\/start$/, async (msg) => {
       "➕ إضافة عدة حسابات:",
       "/add user1 user2 user3",
       "",
-      "📋 عرض الحسابات:",
+      "📋 الحسابات:",
       "/list",
       "",
-      "➖ حذف حساب:",
+      "➖ حذف:",
       "/remove username"
     ].join("\n")
   );
@@ -157,14 +218,20 @@ bot.on("channel_post", async (msg) => {
         addedAt: new Date().toISOString()
       };
 
-      saveJSON(CHANNELS_FILE, channels);
+      saveJSON(
+        CHANNELS_FILE,
+        channels
+      );
 
       console.log(
-        `📢 Channel detected: ${chat.title} (${chat.id})`
+        `📢 Channel detected: ${chat.title}`
       );
     }
   } catch (error) {
-    console.error("❌ Channel detection:", error.message);
+    console.error(
+      "❌ Channel detection:",
+      error.message
+    );
   }
 });
 
@@ -175,27 +242,29 @@ bot.on("channel_post", async (msg) => {
 bot.on("my_chat_member", async (update) => {
   try {
     const chat = update.chat;
-    const newStatus = update.new_chat_member?.status;
+    const status =
+      update.new_chat_member?.status;
 
     if (!chat) return;
 
     if (
       chat.type === "channel" &&
       (
-        newStatus === "administrator" ||
-        newStatus === "member"
+        status === "administrator" ||
+        status === "member"
       )
     ) {
-      const chatId = String(chat.id);
-
-      channels[chatId] = {
+      channels[String(chat.id)] = {
         id: chat.id,
         title: chat.title || "بدون اسم",
         username: chat.username || null,
         addedAt: new Date().toISOString()
       };
 
-      saveJSON(CHANNELS_FILE, channels);
+      saveJSON(
+        CHANNELS_FILE,
+        channels
+      );
 
       console.log(
         `✅ Channel registered: ${chat.title}`
@@ -205,13 +274,18 @@ bot.on("my_chat_member", async (update) => {
     if (
       chat.type === "channel" &&
       (
-        newStatus === "left" ||
-        newStatus === "kicked"
+        status === "left" ||
+        status === "kicked"
       )
     ) {
-      delete channels[String(chat.id)];
+      delete channels[
+        String(chat.id)
+      ];
 
-      saveJSON(CHANNELS_FILE, channels);
+      saveJSON(
+        CHANNELS_FILE,
+        channels
+      );
 
       console.log(
         `🗑️ Channel removed: ${chat.title}`
@@ -226,30 +300,29 @@ bot.on("my_chat_member", async (update) => {
 });
 
 // =========================
-// ADD MULTIPLE STREAMERS
+// CLEAN USERNAME
+// =========================
+
+function cleanUsername(username) {
+  return String(username || "")
+    .trim()
+    .replace(/^@/, "")
+    .replace(
+      /^https?:\/\/(www\.)?kick\.com\//i,
+      ""
+    )
+    .split(/[/?#]/)[0];
+}
+
+// =========================
+// ADD
 // =========================
 
 bot.onText(/^\/add\s+(.+)$/i, async (msg, match) => {
   const usernames = match[1]
     .split(/[,\s]+/)
-    .map(username =>
-      username
-        .trim()
-        .replace(/^@/, "")
-        .replace(
-          /^https?:\/\/(www\.)?kick\.com\//i,
-          ""
-        )
-        .split(/[/?#]/)[0]
-    )
+    .map(cleanUsername)
     .filter(Boolean);
-
-  if (usernames.length === 0) {
-    return bot.sendMessage(
-      msg.chat.id,
-      "❌ اكتب حسابات Kick بعد /add"
-    );
-  }
 
   const added = [];
   const already = [];
@@ -261,7 +334,11 @@ bot.onText(/^\/add\s+(.+)$/i, async (msg, match) => {
       continue;
     }
 
-    if (streamers.includes(username)) {
+    const exists = streamers.some(
+      x => x.toLowerCase() === username.toLowerCase()
+    );
+
+    if (exists) {
       already.push(`@${username}`);
     } else {
       streamers.push(username);
@@ -269,77 +346,102 @@ bot.onText(/^\/add\s+(.+)$/i, async (msg, match) => {
     }
   }
 
-  saveJSON(STREAMERS_FILE, streamers);
+  saveJSON(
+    STREAMERS_FILE,
+    streamers
+  );
 
   let text = "📋 نتيجة الإضافة:\n\n";
 
-  if (added.length > 0) {
-    text += `✅ تمت إضافة ${added.length} حساب:\n`;
-    text += added.join("\n");
+  if (added.length) {
+    text +=
+      `✅ تمت إضافة ${added.length}:\n` +
+      added.join("\n");
   }
 
-  if (already.length > 0) {
-    text += `\n\nℹ️ موجودة مسبقًا:\n`;
-    text += already.join("\n");
+  if (already.length) {
+    text +=
+      "\n\nℹ️ موجودة مسبقًا:\n" +
+      already.join("\n");
   }
 
-  if (invalid.length > 0) {
-    text += `\n\n⚠️ غير صالحة:\n`;
-    text += invalid.join("\n");
+  if (invalid.length) {
+    text +=
+      "\n\n⚠️ غير صالحة:\n" +
+      invalid.join("\n");
   }
 
-  await bot.sendMessage(msg.chat.id, text);
+  await bot.sendMessage(
+    msg.chat.id,
+    text
+  );
 });
 
 // =========================
-// REMOVE STREAMER
+// REMOVE
 // =========================
 
 bot.onText(/^\/remove\s+(.+)$/i, async (msg, match) => {
   const usernames = match[1]
     .split(/[,\s]+/)
-    .map(username =>
-      username.trim().replace(/^@/, "")
-    )
+    .map(cleanUsername)
     .filter(Boolean);
 
   const removed = [];
   const notFound = [];
 
   for (const username of usernames) {
-    const index = streamers.indexOf(username);
+    const index = streamers.findIndex(
+      x =>
+        x.toLowerCase() ===
+        username.toLowerCase()
+    );
 
     if (index === -1) {
       notFound.push(`@${username}`);
     } else {
-      streamers.splice(index, 1);
-      removed.push(`@${username}`);
+      removed.push(
+        `@${streamers[index]}`
+      );
+
+      streamers.splice(
+        index,
+        1
+      );
     }
   }
 
-  saveJSON(STREAMERS_FILE, streamers);
+  saveJSON(
+    STREAMERS_FILE,
+    streamers
+  );
 
   let text = "📋 نتيجة الحذف:\n\n";
 
-  if (removed.length > 0) {
-    text += "✅ تم حذف:\n";
-    text += removed.join("\n");
+  if (removed.length) {
+    text +=
+      "✅ تم حذف:\n" +
+      removed.join("\n");
   }
 
-  if (notFound.length > 0) {
-    text += "\n\n❌ غير موجود:\n";
-    text += notFound.join("\n");
+  if (notFound.length) {
+    text +=
+      "\n\n❌ غير موجود:\n" +
+      notFound.join("\n");
   }
 
-  await bot.sendMessage(msg.chat.id, text);
+  await bot.sendMessage(
+    msg.chat.id,
+    text
+  );
 });
 
 // =========================
 // LIST
 // =========================
 
-bot.onText(/^\/list$/, async (msg) => {
-  if (streamers.length === 0) {
+bot.onText(/^\/list$/i, async (msg) => {
+  if (!streamers.length) {
     return bot.sendMessage(
       msg.chat.id,
       "📋 لا توجد حسابات مضافة."
@@ -355,7 +457,13 @@ bot.onText(/^\/list$/, async (msg) => {
 
   await bot.sendMessage(
     msg.chat.id,
-    `📋 الحسابات المراقبة:\n\n${text}\n\n📊 العدد: ${streamers.length}`
+    [
+      "📋 الحسابات المراقبة:",
+      "",
+      text,
+      "",
+      `📊 العدد: ${streamers.length}`
+    ].join("\n")
   );
 });
 
@@ -363,50 +471,43 @@ bot.onText(/^\/list$/, async (msg) => {
 // KICK INFO
 // =========================
 
-async function getStreamerInfo(username) {
+async function getKickInfo(username) {
   const url =
     `https://kick.com/${encodeURIComponent(username)}`;
 
   try {
-    const data = await youtubedl(url, {
-      dumpSingleJson: true,
-      skipDownload: true,
-      noWarnings: true,
-      noCheckCertificates: true,
-      ffmpegLocation: ffmpegPath,
+    return await youtubedl(
+      url,
+      {
+        dumpSingleJson: true,
+        skipDownload: true,
+        noWarnings: true,
+        noCheckCertificates: true,
+        ffmpegLocation: ffmpegPath,
 
-      addHeader: [
-        "User-Agent: Mozilla/5.0"
-      ]
-    });
-
-    return data;
+        addHeader: [
+          "User-Agent: Mozilla/5.0"
+        ]
+      }
+    );
   } catch (error) {
-    const message = String(
+    const text = String(
       error?.stderr ||
       error?.message ||
       ""
-    );
+    ).toLowerCase();
 
     if (
-      message
-        .toLowerCase()
-        .includes("not currently live")
-    ) {
-      return null;
-    }
-
-    if (
-      message
-        .toLowerCase()
-        .includes("not live")
+      text.includes("not currently live") ||
+      text.includes("not live") ||
+      text.includes("offline")
     ) {
       return null;
     }
 
     console.error(
-      `⚠️ Kick check failed for ${username}:`,
-      message.slice(0, 500)
+      `⚠️ Kick info @${username}:`,
+      text.slice(0, 500)
     );
 
     return null;
@@ -414,176 +515,652 @@ async function getStreamerInfo(username) {
 }
 
 // =========================
-// DOWNLOAD
+// RANDOM CLIP LENGTH
 // =========================
 
-async function downloadStream(
+function randomClipLength() {
+  return Math.floor(
+    Math.random() *
+      (
+        MAX_CLIP_SECONDS -
+        MIN_CLIP_SECONDS +
+        1
+      )
+  ) + MIN_CLIP_SECONDS;
+}
+
+// =========================
+// RANDOM NUMBER
+// =========================
+
+function randomInt(min, max) {
+  return Math.floor(
+    Math.random() *
+      (max - min + 1)
+  ) + min;
+}
+
+// =========================
+// SAFE FILE
+// =========================
+
+function tempFile(prefix) {
+  return path.join(
+    DATA_DIR,
+    `${prefix}-${crypto.randomBytes(8).toString("hex")}.mp4`
+  );
+}
+
+// =========================
+// GET VIDEO DURATION
+// =========================
+
+async function getDuration(file) {
+  const data = await youtubedl(
+    file,
+    {
+      dumpSingleJson: true,
+      skipDownload: true,
+      noWarnings: true,
+      noCheckCertificates: true,
+      ffmpegLocation: ffmpegPath
+    }
+  );
+
+  const duration =
+    Number(data.duration) || 0;
+
+  return duration;
+}
+
+// =========================
+// FFMPEG CUT
+// =========================
+
+async function cutVideo(
+  input,
+  output,
+  start,
+  duration
+) {
+  await youtubedl(
+    input,
+    {
+      output,
+
+      format: "best",
+
+      noWarnings: true,
+      noCheckCertificates: true,
+
+      ffmpegLocation: ffmpegPath,
+
+      downloadSections:
+        `*${start}-${start + duration}`,
+
+      forceKeyframesAtCuts: true,
+
+      mergeOutputFormat: "mp4"
+    }
+  );
+
+  if (!fs.existsSync(output)) {
+    throw new Error(
+      "ملف الكليب لم يتم إنشاؤه"
+    );
+  }
+}
+
+// =========================
+// LIVE CAPTURE
+// =========================
+
+async function captureLive(
   username,
-  outputFile
+  output
 ) {
   const url =
     `https://kick.com/${encodeURIComponent(username)}`;
 
-  await youtubedl(url, {
-    output: outputFile,
+  /*
+   * نلتقط جزءًا قصيرًا من البث فقط.
+   * لا يتم تنزيل البث كاملًا.
+   */
 
-    format: "best",
+  await youtubedl(
+    url,
+    {
+      output,
 
-    mergeOutputFormat: "mp4",
+      format:
+        "bv*+ba/b",
 
-    noPart: true,
+      mergeOutputFormat: "mp4",
 
-    noWarnings: true,
+      noPart: true,
 
-    noCheckCertificates: true,
+      noWarnings: true,
+      noCheckCertificates: true,
 
-    ffmpegLocation: ffmpegPath,
+      ffmpegLocation: ffmpegPath,
 
-    addHeader: [
-      "User-Agent: Mozilla/5.0"
-    ]
-  });
+      downloader: "ffmpeg",
+
+      downloaderArgs: {
+        ffmpeg_i:
+          `-t ${LIVE_CAPTURE_SECONDS}`
+      },
+
+      addHeader: [
+        "User-Agent: Mozilla/5.0"
+      ]
+    }
+  );
+
+  if (!fs.existsSync(output)) {
+    throw new Error(
+      "لم يتم التقاط جزء من البث"
+    );
+  }
 }
 
 // =========================
-// DOWNLOAD + SEND
+// VOD DOWNLOAD SECTION
 // =========================
 
-async function downloadAndSend(job) {
-  const {
-    chatId,
-    streamer,
-    info,
-    streamId
-  } = job;
+async function downloadVodSection(
+  vodUrl,
+  output,
+  start,
+  duration
+) {
+  await youtubedl(
+    vodUrl,
+    {
+      output,
 
-  const safeId = crypto
-    .createHash("md5")
-    .update(
-      `${streamer}-${streamId}`
-    )
-    .digest("hex");
+      format:
+        "bv*+ba/b",
 
-  const outputFile = path.join(
-    DATA_DIR,
-    `${safeId}.mp4`
+      mergeOutputFormat: "mp4",
+
+      noPart: true,
+
+      noWarnings: true,
+      noCheckCertificates: true,
+
+      ffmpegLocation: ffmpegPath,
+
+      downloadSections:
+        `*${start}-${start + duration}`,
+
+      forceKeyframesAtCuts: true,
+
+      addHeader: [
+        "User-Agent: Mozilla/5.0"
+      ]
+    }
   );
 
-  console.log(
-    `⬇️ Downloading @${streamer}`
-  );
-
-  await bot.sendMessage(
-    chatId,
-    [
-      "⏬ جاري تنزيل البث...",
-      "",
-      `👤 @${streamer}`,
-      `🎥 ${info.title || "بدون عنوان"}`
-    ].join("\n")
-  );
-
-  await downloadStream(
-    streamer,
-    outputFile
-  );
-
-  if (!fs.existsSync(outputFile)) {
+  if (!fs.existsSync(output)) {
     throw new Error(
-      "ملف التنزيل غير موجود"
+      "لم يتم إنشاء كليب الـVOD"
     );
   }
+}
 
-  const stats = fs.statSync(
-    outputFile
-  );
+// =========================
+// BUILD CAPTION
+// =========================
 
-  const sizeMB =
-    stats.size / 1024 / 1024;
+function buildCaption(
+  username,
+  info,
+  type
+) {
+  const title =
+    info?.title ||
+    "لقطة عشوائية";
 
-  console.log(
-    `📦 File size: ${sizeMB.toFixed(2)} MB`
-  );
+  const category =
+    Array.isArray(info?.categories)
+      ? info.categories.join(", ")
+      : "Kick";
 
-  if (
-    stats.size >
-    50 * 1024 * 1024
-  ) {
-    await bot.sendMessage(
-      chatId,
-      [
-        "⚠️ تم تنزيل البث.",
-        "",
-        `📦 الحجم: ${sizeMB.toFixed(2)} MB`,
-        "",
-        "لكن حجم الملف أكبر من الحد المسموح به للرفع."
-      ].join("\n")
-    );
-
-    try {
-      fs.unlinkSync(outputFile);
-    } catch {}
-
-    throw new Error(
-      "File exceeds Telegram upload limit"
-    );
-  }
-
-  const caption = [
-    `🎥 ${info.title || "بدون عنوان"}`,
+  return [
+    "🎬 Drex Clips",
     "",
-    `👤 @${streamer}`,
-    `🎮 ${info.categories?.join(", ") || "Kick"}`,
+    `👤 @${username}`,
+    `🎥 ${title}`,
+    `🎮 ${category}`,
     "",
-    `🔗 https://kick.com/${streamer}`,
+    type === "live"
+      ? "🔴 من البث المباشر"
+      : "📼 من إعادة البث",
     "",
-    "© Drex Downloader"
+    `🔗 https://kick.com/${username}`,
+    "",
+    "© Drex"
   ].join("\n");
+}
+
+// =========================
+// SEND CLIP
+// =========================
+
+async function sendClip(
+  file,
+  username,
+  info,
+  type,
+  chatId,
+  duration
+) {
+  if (!fs.existsSync(file)) {
+    throw new Error(
+      "ملف الكليب غير موجود"
+    );
+  }
+
+  let stats =
+    fs.statSync(file);
+
+  let size =
+    stats.size;
+
+  /*
+   * Telegram Bot API cloud limit.
+   * إذا كان الملف كبيرًا جدًا،
+   * نعيد ترميزه بحجم أخف.
+   */
+
+  if (size > TELEGRAM_LIMIT) {
+    const compressed =
+      tempFile("compressed");
+
+    await youtubedl(
+      file,
+      {
+        output: compressed,
+
+        format: "best",
+
+        noWarnings: true,
+        noCheckCertificates: true,
+
+        ffmpegLocation: ffmpegPath,
+
+        recodeVideo: "mp4",
+
+        postprocessorArgs: [
+          "VideoConvertor:-vf scale='min(1920,iw)':-2 -c:v libx264 -crf 23 -preset veryfast -c:a aac -b:a 128k"
+        ]
+      }
+    );
+
+    if (fs.existsSync(compressed)) {
+      try {
+        fs.unlinkSync(file);
+      } catch {}
+
+      fs.renameSync(
+        compressed,
+        file
+      );
+    }
+  }
+
+  stats =
+    fs.statSync(file);
+
+  size =
+    stats.size;
+
+  if (size > TELEGRAM_LIMIT) {
+    throw new Error(
+      "الكليب أكبر من الحد المسموح به في Telegram"
+    );
+  }
+
+  const caption =
+    buildCaption(
+      username,
+      info,
+      type
+    );
 
   await bot.sendVideo(
     chatId,
-    outputFile,
+    file,
     {
       caption,
+
       supports_streaming: true
     }
   );
 
-  downloaded[streamId] = {
-    streamer,
-    chatId,
-    title: info.title || null,
-    downloadedAt:
-      new Date().toISOString()
-  };
-
-  saveJSON(
-    DOWNLOADED_FILE,
-    downloaded
-  );
-
   console.log(
-    `✅ Sent @${streamer} to ${chatId}`
+    `✅ Clip sent @${username} -> ${chatId}`
   );
-
-  try {
-    fs.unlinkSync(outputFile);
-  } catch {}
 }
 
 // =========================
-// MONITOR
+// CREATE LIVE CLIP
+// =========================
+
+async function createLiveClip(
+  username,
+  info,
+  chatId
+) {
+  const capture =
+    tempFile("live");
+
+  const clip =
+    tempFile("clip");
+
+  try {
+    console.log(
+      `🎬 Capturing LIVE @${username}`
+    );
+
+    await captureLive(
+      username,
+      capture
+    );
+
+    const duration =
+      randomClipLength();
+
+    const capturedDuration =
+      await getDuration(
+        capture
+      );
+
+    if (
+      !capturedDuration ||
+      capturedDuration < 15
+    ) {
+      throw new Error(
+        "مدة الجزء الملتقط قصيرة جدًا"
+      );
+    }
+
+    const maxStart =
+      Math.max(
+        0,
+        Math.floor(
+          capturedDuration -
+          duration
+        )
+      );
+
+    const start =
+      randomInt(
+        0,
+        maxStart
+      );
+
+    await cutVideo(
+      capture,
+      clip,
+      start,
+      duration
+    );
+
+    await sendClip(
+      clip,
+      username,
+      info,
+      "live",
+      chatId,
+      duration
+    );
+
+    clips[
+      `${username}-live-${Date.now()}`
+    ] = {
+      username,
+      type: "live",
+      duration,
+      createdAt:
+        new Date().toISOString()
+    };
+
+    saveJSON(
+      CLIPS_FILE,
+      clips
+    );
+  } finally {
+    try {
+      if (fs.existsSync(capture)) {
+        fs.unlinkSync(capture);
+      }
+    } catch {}
+
+    try {
+      if (fs.existsSync(clip)) {
+        fs.unlinkSync(clip);
+      }
+    } catch {}
+  }
+}
+
+// =========================
+// CREATE VOD CLIP
+// =========================
+
+async function createVodClip(
+  username,
+  notifyChatId = null
+) {
+  const info =
+    await getKickInfo(
+      username
+    );
+
+  /*
+   * getKickInfo قد يرجع بيانات VOD
+   * أو بيانات القناة حسب استجابة Kick.
+   */
+
+  if (!info) {
+    throw new Error(
+      `لا يوجد بث/VOD متاح حاليًا لـ @${username}`
+    );
+  }
+
+  const vodUrl =
+    info.webpage_url ||
+    info.original_url ||
+    info.url;
+
+  if (!vodUrl) {
+    throw new Error(
+      "لم يتم العثور على رابط إعادة بث متاح"
+    );
+  }
+
+  const duration =
+    Number(info.duration) || 0;
+
+  if (
+    !duration ||
+    duration < MIN_CLIP_SECONDS
+  ) {
+    throw new Error(
+      "إعادة البث غير متاحة أو مدتها قصيرة"
+    );
+  }
+
+  /*
+   * إذا كان المحتوى للمشتركين فقط
+   * غالبًا yt-dlp سيرفض الوصول.
+   * لا نحاول تجاوز الحماية.
+   */
+
+  const clipDuration =
+    randomClipLength();
+
+  const maxStart =
+    Math.max(
+      0,
+      Math.floor(
+        duration -
+        clipDuration
+      )
+    );
+
+  const start =
+    randomInt(
+      0,
+      maxStart
+    );
+
+  const clip =
+    tempFile("vod");
+
+  try {
+    console.log(
+      `📼 VOD clip @${username} | ${start}s | ${clipDuration}s`
+    );
+
+    await downloadVodSection(
+      vodUrl,
+      clip,
+      start,
+      clipDuration
+    );
+
+    await sendClip(
+      clip,
+      username,
+      info,
+      "vod",
+      notifyChatId,
+      clipDuration
+    );
+
+    clips[
+      `${username}-vod-${start}`
+    ] = {
+      username,
+      type: "vod",
+      start,
+      duration: clipDuration,
+      createdAt:
+        new Date().toISOString()
+    };
+
+    saveJSON(
+      CLIPS_FILE,
+      clips
+    );
+  } finally {
+    try {
+      if (fs.existsSync(clip)) {
+        fs.unlinkSync(clip);
+      }
+    } catch {}
+  }
+}
+
+// =========================
+// CREATE + SEND
+// =========================
+
+async function createAndSendClip(job) {
+  const {
+    streamer,
+    type,
+    info,
+    chatId,
+    notifyChatId
+  } = job;
+
+  if (type === "live") {
+    await createLiveClip(
+      streamer,
+      info,
+      chatId
+    );
+
+    return;
+  }
+
+  if (type === "vod") {
+    await createVodClip(
+      streamer,
+      notifyChatId || chatId
+    );
+
+    return;
+  }
+
+  throw new Error(
+    "نوع كليب غير معروف"
+  );
+}
+
+// =========================
+// MANUAL /clip
+// =========================
+
+bot.onText(/^\/clip(?:\s+(.+))?$/i, async (msg, match) => {
+  const username =
+    cleanUsername(
+      match?.[1]
+    );
+
+  if (!username) {
+    return bot.sendMessage(
+      msg.chat.id,
+      [
+        "❌ استخدم الأمر هكذا:",
+        "",
+        "/clip username",
+        "",
+        "مثال:",
+        "/clip drb7h"
+      ].join("\n")
+    );
+  }
+
+  if (
+    !/^[a-zA-Z0-9_-]+$/.test(username)
+  ) {
+    return bot.sendMessage(
+      msg.chat.id,
+      "❌ اسم الحساب غير صالح."
+    );
+  }
+
+  await bot.sendMessage(
+    msg.chat.id,
+    `🎬 جاري البحث عن كليب لـ @${username}...`
+  );
+
+  addToQueue({
+    streamer: username,
+    type: "vod",
+    notifyChatId: msg.chat.id,
+    chatId: msg.chat.id
+  });
+});
+
+// =========================
+// MONITOR LIVE
 // =========================
 
 async function monitor() {
-  if (streamers.length === 0) {
+  if (!streamers.length) {
     return;
   }
 
   const channelList =
     Object.values(channels);
 
-  if (channelList.length === 0) {
+  if (!channelList.length) {
     console.log(
       "ℹ️ لا توجد قناة مسجلة."
     );
@@ -591,13 +1168,22 @@ async function monitor() {
     return;
   }
 
-  for (
-    const username
-    of [...streamers]
-  ) {
+  /*
+   * نختار ستريمرًا واحدًا عشوائيًا
+   * في كل دورة بدل إنشاء كليب لكل الحسابات.
+   */
+
+  const shuffled =
+    [...streamers]
+      .sort(
+        () =>
+          Math.random() - 0.5
+      );
+
+  for (const username of shuffled) {
     try {
       const info =
-        await getStreamerInfo(
+        await getKickInfo(
           username
         );
 
@@ -605,52 +1191,44 @@ async function monitor() {
         continue;
       }
 
-      if (
-        info.live_status &&
-        info.live_status !== "is_live"
-      ) {
-        continue;
-      }
+      const live =
+        info.live_status === "is_live" ||
+        info.is_live === true ||
+        info.live === true;
 
-      const streamId =
-        info.id ||
-        info.display_id ||
-        `${username}-${info.timestamp || "live"}`;
-
-      if (
-        downloaded[streamId]
-      ) {
+      if (!live) {
         continue;
       }
 
       console.log(
-        `🟢 LIVE: @${username}`
+        `🟢 LIVE CLIP: @${username}`
       );
+
+      /*
+       * لكل قناة مسجلة.
+       */
 
       for (
         const channel
         of channelList
       ) {
-        const alreadyQueued =
-          queue.some(
-            job =>
-              job.chatId === channel.id &&
-              job.streamId === streamId
-          );
-
-        if (!alreadyQueued) {
-          addToQueue({
-            chatId: channel.id,
-            streamer: username,
-            info,
-            streamId
-          });
-        }
+        addToQueue({
+          streamer: username,
+          type: "live",
+          info,
+          chatId: channel.id
+        });
       }
+
+      /*
+       * ستريمر واحد فقط في كل دورة.
+       */
+
+      break;
     } catch (error) {
       console.error(
         `❌ Monitor @${username}:`,
-        error.message
+        error?.message || error
       );
     }
   }
@@ -661,7 +1239,7 @@ async function monitor() {
 // =========================
 
 console.log(
-  "🤖 Drex Downloader Bot started."
+  "🤖 Drex Clips Bot started."
 );
 
 console.log(
@@ -672,14 +1250,22 @@ console.log(
   `📢 Channels: ${Object.keys(channels).length}`
 );
 
+console.log(
+  "🎬 Auto clips: every 10 minutes"
+);
+
+console.log(
+  "⏱️ Clip duration: 15-30 seconds"
+);
+
 setInterval(
   monitor,
-  60 * 1000
+  AUTO_CLIP_INTERVAL
 );
 
 setTimeout(
   monitor,
-  10 * 1000
+  15000
 );
 
 // =========================
